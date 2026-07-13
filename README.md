@@ -4,7 +4,7 @@ QuitDelay is a native macOS menu-bar utility that prevents accidental Command–
 
 ## Install the signed release
 
-**[Download the latest signed release from GitHub](../../releases/latest)**
+**[Download the latest signed release from GitHub](https://github.com/vitaliy-blprnt/quit-delay/releases/latest)**
 
 Official release builds are signed with Apple Developer ID, notarized by Apple, and have the notarization ticket stapled to the app. If a release is not yet available—or if you prefer to build and sign the code yourself—follow the local build instructions below.
 
@@ -29,9 +29,10 @@ Local builds require macOS 14 or later and Xcode 15 or later.
 
 This is the recommended approach for development because the app keeps a stable signing identity across builds, which makes macOS privacy permissions and Launch on Boot more reliable.
 
-1. Clone this repository using GitHub's **Code** menu, then open the project:
+1. Clone and open the project:
 
    ```sh
+   git clone https://github.com/vitaliy-blprnt/quit-delay.git
    cd quit-delay
    open QuitDelay.xcodeproj
    ```
