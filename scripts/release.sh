@@ -215,7 +215,7 @@ printf '%s\n' "${SIGNATURE_DETAILS}" | grep -Fq 'Authority=Developer ID Applicat
     die "Archive is not signed with Developer ID Application."
 printf '%s\n' "${SIGNATURE_DETAILS}" | grep -Fq "TeamIdentifier=${APPLE_TEAM_ID}" || \
     die "Archive has the wrong TeamIdentifier."
-printf '%s\n' "${SIGNATURE_DETAILS}" | grep -Eq '^flags=.*runtime' || \
+printf '%s\n' "${SIGNATURE_DETAILS}" | grep -Eq 'flags=.*runtime' || \
     die "Hardened Runtime is not enabled in the archive."
 printf '%s\n' "${SIGNATURE_DETAILS}" | grep -Fq 'Timestamp=' || \
     die "The Developer ID signature does not contain a secure timestamp."
