@@ -2,42 +2,117 @@
 
 QuitDelay is a native macOS menu-bar utility that prevents accidental Command–Q quits. Pressing Command–Q shows a progress overlay; releasing either key before the configured delay cancels the quit. Holding the shortcut for the full delay sends Command–Q only to the application that was focused when the hold began.
 
-## Requirements
+## Install the signed release
 
-- macOS 14 or later
-- Xcode 15 or later
-- Accessibility/Input Monitoring approval when macOS prompts for it
+**[Download the latest signed release from GitHub](https://github.com/vitaliy-blprnt/quit-delay/releases/latest)**
 
-## Build and run
+Official release builds are signed with Apple Developer ID, notarized by Apple, and have the notarization ticket stapled to the app. If a release is not yet available—or if you prefer to build and sign the code yourself—follow the local build instructions below.
 
-1. Open `QuitDelay.xcodeproj` in Xcode.
-2. Select your development team under **Signing & Capabilities** so the app keeps a stable identity.
-3. Select the **QuitDelay** scheme and run it.
-4. Approve the requested privacy permissions in **System Settings → Privacy & Security**. If macOS asks for a relaunch after Input Monitoring approval, quit and run QuitDelay again.
+1. Download `QuitDelay-vX.Y.Z.zip` and its `.sha256` file from the release assets.
+2. Optionally verify the download from the directory containing both files:
 
-QuitDelay runs as an agent app: it has no Dock icon and is controlled through its hourglass icon in the menu bar.
+   ```sh
+   shasum -a 256 -c QuitDelay-vX.Y.Z.zip.sha256
+   ```
 
-## Verification
+3. Extract the ZIP and move `QuitDelay.app` to `/Applications`.
+4. Open QuitDelay. Approve the requested permissions in **System Settings → Privacy & Security** when macOS prompts.
+5. If macOS requests a relaunch after Input Monitoring approval, quit and open QuitDelay again.
 
-Run the unit tests from Xcode, or from Terminal:
+QuitDelay is an agent app: it has no Dock icon. Use its hourglass icon in the macOS menu bar to change the hold delay, enable Launch on Boot, open Settings, or quit QuitDelay.
+
+## Build and self-sign locally
+
+Local builds require macOS 14 or later and Xcode 15 or later.
+
+### Sign with your Apple development identity
+
+This is the recommended approach for development because the app keeps a stable signing identity across builds, which makes macOS privacy permissions and Launch on Boot more reliable.
+
+1. Clone and open the project:
+
+   ```sh
+   git clone https://github.com/vitaliy-blprnt/quit-delay.git
+   cd quit-delay
+   open QuitDelay.xcodeproj
+   ```
+
+2. In Xcode, select the **QuitDelay** project, then the **QuitDelay** app target.
+3. Open **Signing & Capabilities**, enable **Automatically manage signing**, and choose your development team.
+4. Select the **QuitDelay** scheme with **My Mac** as the destination, then press Run.
+5. Approve Accessibility/Input Monitoring access when prompted.
+
+Xcode signs this build with your Apple Development identity. It is suitable for your own Macs, but it is not a Developer ID-notarized build and should not be redistributed as an official release.
+
+### Ad-hoc sign without a developer account
+
+For temporary local testing, build a universal Release app with an ad-hoc signature:
+
+```sh
+xcodebuild -project QuitDelay.xcodeproj \
+  -scheme QuitDelay \
+  -configuration Release \
+  -destination 'generic/platform=macOS' \
+  -derivedDataPath DerivedData \
+  build \
+  ARCHS='arm64 x86_64' \
+  ONLY_ACTIVE_ARCH=NO \
+  CODE_SIGN_STYLE=Manual \
+  CODE_SIGN_IDENTITY=- \
+  DEVELOPMENT_TEAM=
+```
+
+The app will be at `DerivedData/Build/Products/Release/QuitDelay.app`. Ad-hoc builds are not notarized and are only intended for your own Mac. Because their identity can change between builds, macOS may request privacy approval again; use the signed GitHub release or a consistent Apple Development identity for regular use.
+
+## Development
+
+1. Clone the repository and open `QuitDelay.xcodeproj`.
+2. Configure your development team under **Signing & Capabilities**.
+3. Build and run the **QuitDelay** scheme on **My Mac**.
+4. Grant the requested privacy permissions and manually verify both paths:
+
+   - Releasing Command–Q early dismisses the overlay without quitting the focused app.
+   - Holding Command–Q through the configured delay quits only the app that was focused when the hold began.
+
+5. With multiple displays attached, verify the overlay appears on the display containing the focused app window.
+
+Run all unit tests without requiring a test signing identity:
 
 ```sh
 xcodebuild -project QuitDelay.xcodeproj \
   -scheme QuitDelay \
   -destination 'platform=macOS' \
-  test
+  test \
+  CODE_SIGNING_ALLOWED=NO
 ```
 
-For Launch on Boot, use a consistently signed build. Moving a release build to `/Applications` before enabling the option gives macOS the most stable registration path.
+Run Xcode's static analyzer:
 
-## Publish a release
+```sh
+xcodebuild -project QuitDelay.xcodeproj \
+  -scheme QuitDelay \
+  -destination 'platform=macOS' \
+  analyze \
+  CODE_SIGNING_ALLOWED=NO
+```
 
-The release script runs the tests, builds a universal `arm64`/`x86_64` archive, signs it with Developer ID, notarizes and staples it, verifies it with Gatekeeper, and uploads the ZIP and its SHA-256 checksum to the public GitHub repository.
+The main source areas are:
+
+- `QuitDelay/App`: app and menu-bar lifecycle
+- `QuitDelay/Input`: global Command–Q event interception and replay
+- `QuitDelay/Core`: settings and hold-to-quit state machine
+- `QuitDelay/UI`: settings window, overlay, and multi-display placement
+- `QuitDelay/Services`: privacy permission and Launch on Boot integration
+- `QuitDelayTests`: state-machine, settings, event, and display tests
+
+## Publish a maintainer release
+
+The release script runs the tests, builds a universal `arm64`/`x86_64` archive, signs it with Developer ID, notarizes and staples it, verifies it with Gatekeeper, and uploads the ZIP and its SHA-256 checksum to GitHub Releases.
 
 Before the first release:
 
 1. Install a valid **Developer ID Application** certificate and its private key in Keychain Access under **My Certificates**.
-2. Save notarization credentials in the login Keychain. This command prompts for the Apple ID, team ID, and app-specific password without putting the password in the repository:
+2. Save notarization credentials in the login Keychain. This command prompts for credentials without putting them in the repository:
 
    ```sh
    xcrun notarytool store-credentials QuitDelay
@@ -58,4 +133,4 @@ Before the first release:
 
 Use `--draft` or `--prerelease` after the version when needed. `NOTARY_PROFILE`, `SIGNING_IDENTITY`, and `BUILD_NUMBER` can override their detected/default values; set `SKIP_TESTS=1` only when the tests have already run against the exact commit being released.
 
-The script intentionally stops before building if the Developer ID private key, notarization profile, active `vitaliy-blprnt` GitHub login, public repository, clean working tree, or pushed commit is missing.
+The script stops before building if the Developer ID private key, notarization profile, active `vitaliy-blprnt` GitHub login, public repository, clean working tree, or pushed commit is missing.
