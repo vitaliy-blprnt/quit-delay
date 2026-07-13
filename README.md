@@ -4,7 +4,7 @@ QuitDelay is a native macOS menu-bar utility that prevents accidental Command–
 
 ## Install the signed release
 
-**[Download the latest signed release from GitHub](https://github.com/vitaliy-blprnt/quit-delay/releases/latest)**
+**[Download the latest signed release from GitHub](../../releases/latest)**
 
 Official release builds are signed with Apple Developer ID, notarized by Apple, and have the notarization ticket stapled to the app. If a release is not yet available—or if you prefer to build and sign the code yourself—follow the local build instructions below.
 
@@ -29,10 +29,9 @@ Local builds require macOS 14 or later and Xcode 15 or later.
 
 This is the recommended approach for development because the app keeps a stable signing identity across builds, which makes macOS privacy permissions and Launch on Boot more reliable.
 
-1. Clone and open the project:
+1. Clone this repository using GitHub's **Code** menu, then open the project:
 
    ```sh
-   git clone https://github.com/vitaliy-blprnt/quit-delay.git
    cd quit-delay
    open QuitDelay.xcodeproj
    ```
@@ -118,14 +117,7 @@ Before the first release:
    xcrun notarytool store-credentials QuitDelay
    ```
 
-3. Make sure GitHub CLI is using the repository owner:
-
-   ```sh
-   gh auth switch --hostname github.com --user vitaliy-blprnt
-   gh auth status --hostname github.com
-   ```
-
-4. Commit and push a clean `main` branch, then run:
+3. Commit and push a clean `main` branch, then run:
 
    ```sh
    scripts/release.sh 1.0.0
@@ -133,4 +125,4 @@ Before the first release:
 
 Use `--draft` or `--prerelease` after the version when needed. `NOTARY_PROFILE`, `SIGNING_IDENTITY`, and `BUILD_NUMBER` can override their detected/default values; set `SKIP_TESTS=1` only when the tests have already run against the exact commit being released.
 
-The script stops before building if the Developer ID private key, notarization profile, active `vitaliy-blprnt` GitHub login, public repository, clean working tree, or pushed commit is missing.
+The script validates the signing credentials, notarization profile, and repository state before building.
