@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     if !permissions.isReady && !ProcessInfo.processInfo.permissionPromptsAreDisabled {
       permissions.requestRequiredAccess()
+      showSettings()
     }
 
     permissionPollTimer = Timer.scheduledTimer(
@@ -191,6 +192,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
           retryInterception: { [weak self] in
             self?.permissions.refresh()
             self?.updateInterceptionState()
+          },
+          relaunchApp: { [weak self] in
+            self?.relaunchQuitDelay()
           }
         )
       )
@@ -225,6 +229,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   @objc private func quitQuitDelay() {
     NSApp.terminate(nil)
+  }
+
+  private func relaunchQuitDelay() {
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.createsNewApplicationInstance = true
+    NSWorkspace.shared.openApplication(
+      at: Bundle.main.bundleURL,
+      configuration: configuration
+    ) { _, error in
+      DispatchQueue.main.async {
+        if let error {
+          let alert = NSAlert()
+          alert.alertStyle = .warning
+          alert.messageText = "Couldn’t relaunch QuitDelay"
+          alert.informativeText = error.localizedDescription
+          alert.runModal()
+          return
+        }
+        NSApp.terminate(nil)
+      }
+    }
   }
 }
 

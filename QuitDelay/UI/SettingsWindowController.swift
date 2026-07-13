@@ -8,7 +8,7 @@ final class SettingsWindowController: NSWindowController {
     window.title = "QuitDelay Settings"
     window.styleMask = [.titled, .closable]
     window.isReleasedWhenClosed = false
-    window.setContentSize(NSSize(width: 460, height: 450))
+    window.setContentSize(NSSize(width: 460, height: 560))
     window.center()
 
     super.init(window: window)

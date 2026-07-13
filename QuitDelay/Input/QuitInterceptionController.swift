@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import OSLog
 
 final class QuitInterceptionController {
   private let settings: AppSettings
@@ -21,8 +22,6 @@ final class QuitInterceptionController {
   }
 
   func startIfNeeded() {
-    guard CGPreflightListenEventAccess(), CGPreflightPostEventAccess() else { return }
-
     lifecycleLock.lock()
     defer { lifecycleLock.unlock() }
     let wasDesiredRunning = desiredRunning
@@ -78,11 +77,6 @@ final class QuitInterceptionController {
   }
 
   func restart() {
-    guard CGPreflightListenEventAccess(), CGPreflightPostEventAccess() else {
-      stop()
-      return
-    }
-
     lifecycleLock.lock()
     desiredRunning = true
     let currentWorker = worker
@@ -122,7 +116,10 @@ final class QuitInterceptionController {
 private final class EventTapWorker {
   typealias Session = HoldToQuitStateMachine.Session
 
-  static let replayMarker: Int64 = 0x5144_4C59_5245_504C
+  private static let logger = Logger(
+    subsystem: "com.supagoku.QuitDelay",
+    category: "Interception"
+  )
 
   let id = UUID()
 
@@ -134,6 +131,7 @@ private final class EventTapWorker {
   private let runLoopLock = NSLock()
 
   private var stateMachine = HoldToQuitStateMachine()
+  private var chordTracker = QuitChordTracker()
   private var capturedQKeyCode: CGKeyCode?
   private var deadlineTimer: Timer?
   private var watchdogTimer: Timer?
@@ -174,7 +172,7 @@ private final class EventTapWorker {
 
     guard let runLoop else { return }
     CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) { [self] in
-      apply(stateMachine.handle(.interrupted(qIsDown: isCapturedKeyPhysicallyDown)))
+      apply(stateMachine.handle(.interrupted(qIsDown: chordTracker.qIsDown)))
       clearCapturedKeyIfIdle()
       tearDownEventTap()
       if let workerRunLoop {
@@ -187,7 +185,7 @@ private final class EventTapWorker {
   func cancelCurrentHold() {
     performOnWorkerRunLoop { [weak self] in
       guard let self else { return }
-      apply(stateMachine.handle(.interrupted(qIsDown: isCapturedKeyPhysicallyDown)))
+      apply(stateMachine.handle(.interrupted(qIsDown: chordTracker.qIsDown)))
       clearCapturedKeyIfIdle()
     }
   }
@@ -260,7 +258,7 @@ private final class EventTapWorker {
 
   fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-      apply(stateMachine.handle(.interrupted(qIsDown: isCapturedKeyPhysicallyDown)))
+      apply(stateMachine.handle(.interrupted(qIsDown: chordTracker.qIsDown)))
       clearCapturedKeyIfIdle()
       if let eventTap {
         CGEvent.tapEnable(tap: eventTap, enable: true)
@@ -271,10 +269,6 @@ private final class EventTapWorker {
           CFRunLoopStop(workerRunLoop)
         }
       }
-      return Unmanaged.passUnretained(event)
-    }
-
-    if event.getIntegerValueField(.eventSourceUserData) == Self.replayMarker {
       return Unmanaged.passUnretained(event)
     }
 
@@ -289,16 +283,31 @@ private final class EventTapWorker {
         guard keyCode == capturedQKeyCode else {
           return Unmanaged.passUnretained(event)
         }
+        chordTracker.handleQDown(flags: event.flags)
         transition = stateMachine.handle(.qDown)
       } else if !isAutorepeat,
         QuitShortcut.isPlainCommand(event.flags),
         QuitShortcut.representsLogicalQ(event)
       {
-        let targetPID = Int32(event.getIntegerValueField(.eventTargetUnixProcessID))
-        guard targetPID != getpid() else {
+        let annotatedTargetPID = Int32(
+          event.getIntegerValueField(.eventTargetUnixProcessID)
+        )
+        let frontmostTargetPID = NSWorkspace.shared.frontmostApplication
+          .map { Int32($0.processIdentifier) }
+        guard
+          let targetPID = QuitTargetResolver.resolve(
+            frontmostPID: frontmostTargetPID,
+            annotatedPID: annotatedTargetPID,
+            ownPID: Int32(getpid())
+          )
+        else {
           return Unmanaged.passUnretained(event)
         }
+        Self.logger.debug(
+          "Hold started for PID \(targetPID, privacy: .public); frontmost=\(frontmostTargetPID ?? 0, privacy: .public), annotated=\(annotatedTargetPID, privacy: .public)"
+        )
         self.capturedQKeyCode = keyCode
+        chordTracker.handleQDown(flags: event.flags)
         transition = stateMachine.handle(
           .plainCommandQDown(
             targetPID: targetPID,
@@ -310,6 +319,7 @@ private final class EventTapWorker {
         QuitShortcut.representsLogicalQ(event)
       {
         self.capturedQKeyCode = keyCode
+        chordTracker.handleQDown(flags: event.flags)
         transition = stateMachine.handle(.qDown)
       } else {
         return Unmanaged.passUnretained(event)
@@ -323,16 +333,18 @@ private final class EventTapWorker {
       guard keyCode == capturedQKeyCode else {
         return Unmanaged.passUnretained(event)
       }
+      chordTracker.handleQUp(flags: event.flags)
       let transition = stateMachine.handle(.qUp)
       apply(transition)
       clearCapturedKeyIfIdle()
       return transition.suppressEvent ? nil : Unmanaged.passUnretained(event)
 
     case .flagsChanged:
+      chordTracker.handleModifiersChanged(flags: event.flags)
       let transition = stateMachine.handle(
         .modifiersChanged(
-          plainCommandIsHeld: QuitShortcut.isPlainCommand(event.flags),
-          qIsDown: isCapturedKeyPhysicallyDown
+          plainCommandIsHeld: chordTracker.plainCommandIsHeld,
+          qIsDown: chordTracker.qIsDown
         )
       )
       apply(transition)
@@ -363,10 +375,13 @@ private final class EventTapWorker {
         deadlineTimer?.invalidate()
         deadlineTimer = nil
 
-      case .replayCommandQ(let targetPID):
-        if !postCommandQ(to: pid_t(targetPID)) {
-          reportOperationalFailure(
-            "QuitDelay could not replay Command–Q. Re-authorize system access before trying again."
+      case .requestApplicationQuit(let targetPID):
+        Self.logger.info(
+          "Requesting normal termination for PID \(targetPID, privacy: .public)"
+        )
+        if !requestApplicationQuit(targetPID: targetPID) {
+          Self.logger.error(
+            "Normal termination request failed for PID \(targetPID, privacy: .public)"
           )
         }
       }
@@ -393,7 +408,7 @@ private final class EventTapWorker {
 
   private func verifyEventTapIsAlive() {
     guard let eventTap, CFMachPortIsValid(eventTap) else {
-      apply(stateMachine.handle(.interrupted(qIsDown: isCapturedKeyPhysicallyDown)))
+      apply(stateMachine.handle(.interrupted(qIsDown: chordTracker.qIsDown)))
       clearCapturedKeyIfIdle()
       reportOperationalFailure(
         "QuitDelay’s keyboard monitor stopped responding. Retry system access before continuing."
@@ -405,7 +420,7 @@ private final class EventTapWorker {
     }
 
     guard !CGEvent.tapIsEnabled(tap: eventTap) else { return }
-    apply(stateMachine.handle(.interrupted(qIsDown: isCapturedKeyPhysicallyDown)))
+    apply(stateMachine.handle(.interrupted(qIsDown: chordTracker.qIsDown)))
     clearCapturedKeyIfIdle()
     CGEvent.tapEnable(tap: eventTap, enable: true)
 
@@ -418,17 +433,19 @@ private final class EventTapWorker {
   }
 
   private func deadlineReached(for session: Session) {
-    let physicalFlags = CGEventSource.flagsState(.combinedSessionState)
-    let qIsDown = isCapturedKeyPhysicallyDown
-    let chordIsStillHeld = qIsDown && QuitShortcut.isPlainCommand(physicalFlags)
+    let qIsDown = chordTracker.qIsDown
+    let chordIsStillHeld = chordTracker.isHeld
     let targetApplication = NSRunningApplication(
       processIdentifier: pid_t(session.targetPID)
     )
     let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
     let targetIsStillActive =
       targetApplication?.isTerminated == false
-      && targetApplication?.isActive == true
       && frontmostPID == pid_t(session.targetPID)
+
+    Self.logger.debug(
+      "Hold deadline for PID \(session.targetPID, privacy: .public); qDown=\(qIsDown, privacy: .public), chordHeld=\(chordIsStillHeld, privacy: .public), targetActive=\(targetIsStillActive, privacy: .public), frontmost=\(frontmostPID ?? 0, privacy: .public)"
+    )
 
     let transition = stateMachine.handle(
       .deadline(
@@ -442,43 +459,16 @@ private final class EventTapWorker {
     clearCapturedKeyIfIdle()
   }
 
-  private func postCommandQ(to targetPID: pid_t) -> Bool {
-    guard let capturedQKeyCode else { return false }
-    guard CGPreflightPostEventAccess(),
-      let source = CGEventSource(stateID: .privateState),
-      let keyDown = CGEvent(
-        keyboardEventSource: source,
-        virtualKey: capturedQKeyCode,
-        keyDown: true
+  private func requestApplicationQuit(targetPID: Int32) -> Bool {
+    guard
+      let application = NSRunningApplication(
+        processIdentifier: pid_t(targetPID)
       ),
-      let keyUp = CGEvent(
-        keyboardEventSource: source,
-        virtualKey: capturedQKeyCode,
-        keyDown: false
-      )
+      !application.isTerminated
     else {
       return false
     }
-
-    source.userData = Self.replayMarker
-    source.localEventsSuppressionInterval = 0
-
-    for replayEvent in [keyDown, keyUp] {
-      replayEvent.flags = [.maskCommand]
-      var logicalQ = Array("q".utf16)
-      logicalQ.withUnsafeMutableBufferPointer { buffer in
-        replayEvent.keyboardSetUnicodeString(
-          stringLength: buffer.count,
-          unicodeString: buffer.baseAddress!
-        )
-      }
-      replayEvent.setIntegerValueField(
-        .eventSourceUserData,
-        value: Self.replayMarker
-      )
-      replayEvent.postToPid(targetPID)
-    }
-    return true
+    return application.terminate()
   }
 
   private func tearDownEventTap() {
@@ -521,17 +511,57 @@ private final class EventTapWorker {
     operationalFailure(message)
   }
 
-  private var isCapturedKeyPhysicallyDown: Bool {
-    guard let capturedQKeyCode else { return false }
-    return CGEventSource.keyState(.combinedSessionState, key: capturedQKeyCode)
-  }
-
   private func clearCapturedKeyIfIdle() {
     if stateMachine.phase == .idle {
       capturedQKeyCode = nil
+      chordTracker.reset()
     }
   }
 
+}
+
+struct QuitChordTracker {
+  private(set) var qIsDown = false
+  private(set) var plainCommandIsHeld = false
+
+  var isHeld: Bool {
+    qIsDown && plainCommandIsHeld
+  }
+
+  mutating func handleQDown(flags: CGEventFlags) {
+    qIsDown = true
+    plainCommandIsHeld = QuitShortcut.isPlainCommand(flags)
+  }
+
+  mutating func handleQUp(flags: CGEventFlags) {
+    qIsDown = false
+    plainCommandIsHeld = QuitShortcut.isPlainCommand(flags)
+  }
+
+  mutating func handleModifiersChanged(flags: CGEventFlags) {
+    plainCommandIsHeld = QuitShortcut.isPlainCommand(flags)
+  }
+
+  mutating func reset() {
+    qIsDown = false
+    plainCommandIsHeld = false
+  }
+}
+
+enum QuitTargetResolver {
+  static func resolve(
+    frontmostPID: Int32?,
+    annotatedPID: Int32,
+    ownPID: Int32
+  ) -> Int32? {
+    if annotatedPID > 0 {
+      return annotatedPID == ownPID ? nil : annotatedPID
+    }
+    if let frontmostPID, frontmostPID > 0 {
+      return frontmostPID == ownPID ? nil : frontmostPID
+    }
+    return nil
+  }
 }
 
 private let eventTapCallback: CGEventTapCallBack = { _, type, event, userInfo in

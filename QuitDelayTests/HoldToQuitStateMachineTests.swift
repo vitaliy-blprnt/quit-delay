@@ -20,7 +20,9 @@ final class HoldToQuitStateMachineTests: XCTestCase {
       [.cancelDeadline, .hideOverlay(generation: session.generation)]
     )
     XCTAssertEqual(machine.phase, .idle)
-    XCTAssertFalse(released.effects.contains(.replayCommandQ(targetPID: 42)))
+    XCTAssertFalse(
+      released.effects.contains(.requestApplicationQuit(targetPID: 42))
+    )
   }
 
   func testCommandReleaseCancelsAndDrainsUntilQUp() throws {
@@ -46,7 +48,7 @@ final class HoldToQuitStateMachineTests: XCTestCase {
     XCTAssertEqual(machine.phase, .idle)
   }
 
-  func testDeadlineReplaysExactlyOnce() throws {
+  func testDeadlineRequestsQuitExactlyOnce() throws {
     var machine = HoldToQuitStateMachine()
     let session = try XCTUnwrap(
       session(
@@ -64,7 +66,9 @@ final class HoldToQuitStateMachineTests: XCTestCase {
     )
 
     XCTAssertEqual(
-      deadline.effects.filter { $0 == .replayCommandQ(targetPID: 42) }.count,
+      deadline.effects.filter {
+        $0 == .requestApplicationQuit(targetPID: 42)
+      }.count,
       1
     )
     XCTAssertEqual(machine.phase, .suppressingUntilQUp)
@@ -77,7 +81,9 @@ final class HoldToQuitStateMachineTests: XCTestCase {
         qIsDown: true
       )
     )
-    XCTAssertFalse(repeatedDeadline.effects.contains(.replayCommandQ(targetPID: 42)))
+    XCTAssertFalse(
+      repeatedDeadline.effects.contains(.requestApplicationQuit(targetPID: 42))
+    )
   }
 
   func testStaleDeadlineCannotQuitNewSession() throws {
@@ -124,7 +130,9 @@ final class HoldToQuitStateMachineTests: XCTestCase {
       )
     )
 
-    XCTAssertFalse(deadline.effects.contains(.replayCommandQ(targetPID: 42)))
+    XCTAssertFalse(
+      deadline.effects.contains(.requestApplicationQuit(targetPID: 42))
+    )
     XCTAssertEqual(machine.phase, .suppressingUntilQUp)
   }
 
@@ -145,7 +153,9 @@ final class HoldToQuitStateMachineTests: XCTestCase {
       )
     )
 
-    XCTAssertFalse(deadline.effects.contains(.replayCommandQ(targetPID: 42)))
+    XCTAssertFalse(
+      deadline.effects.contains(.requestApplicationQuit(targetPID: 42))
+    )
     XCTAssertEqual(machine.phase, .idle)
   }
 
@@ -312,5 +322,147 @@ final class AppSettingsTests: XCTestCase {
 
     XCTAssertEqual(settings.holdDuration, AppSettings.defaultHoldDuration)
     XCTAssertEqual(settings.snapshotHoldDuration(), AppSettings.defaultHoldDuration)
+  }
+}
+
+final class AccessibilityPermissionControllerTests: XCTestCase {
+  func testAccessibilityIsTheOnlyRequiredPermission() {
+    let controller = AccessibilityPermissionController(
+      preflightAccessibilityAccess: { true },
+      requestAccessibilityAccess: {
+        XCTFail("Access should not be requested")
+        return false
+      }
+    )
+
+    XCTAssertTrue(controller.isAccessibilityGranted)
+    XCTAssertTrue(controller.isReady)
+  }
+
+  func testRequestRefreshesAccessibilityState() {
+    var isAllowed = false
+    var requestCount = 0
+    let controller = AccessibilityPermissionController(
+      preflightAccessibilityAccess: { isAllowed },
+      requestAccessibilityAccess: {
+        requestCount += 1
+        isAllowed = true
+        return true
+      }
+    )
+
+    XCTAssertFalse(controller.isReady)
+
+    controller.requestRequiredAccess()
+
+    XCTAssertEqual(requestCount, 1)
+    XCTAssertTrue(controller.isAccessibilityGranted)
+    XCTAssertTrue(controller.isReady)
+  }
+
+  func testNewlyGrantedAccessClearsAStaleRuntimeFailure() {
+    var isAllowed = false
+    let controller = AccessibilityPermissionController(
+      preflightAccessibilityAccess: { isAllowed },
+      requestAccessibilityAccess: { false }
+    )
+    controller.reportOperationalFailure("Event tap failed")
+
+    isAllowed = true
+    controller.refresh()
+
+    XCTAssertNil(controller.runtimeError)
+    XCTAssertTrue(controller.isReady)
+  }
+}
+
+final class QuitChordTrackerTests: XCTestCase {
+  func testSuppressedQDownRemainsHeldUntilTapReceivesQUp() {
+    var tracker = QuitChordTracker()
+
+    tracker.handleQDown(flags: [.maskCommand])
+
+    XCTAssertTrue(tracker.qIsDown)
+    XCTAssertTrue(tracker.plainCommandIsHeld)
+    XCTAssertTrue(tracker.isHeld)
+
+    tracker.handleQUp(flags: [.maskCommand])
+
+    XCTAssertFalse(tracker.qIsDown)
+    XCTAssertFalse(tracker.isHeld)
+  }
+
+  func testCommandReleaseCancelsHeldChordWhileQRemainsDown() {
+    var tracker = QuitChordTracker()
+    tracker.handleQDown(flags: [.maskCommand])
+
+    tracker.handleModifiersChanged(flags: [])
+
+    XCTAssertTrue(tracker.qIsDown)
+    XCTAssertFalse(tracker.plainCommandIsHeld)
+    XCTAssertFalse(tracker.isHeld)
+  }
+
+  func testAdditionalModifierInvalidatesPlainCommandChord() {
+    var tracker = QuitChordTracker()
+
+    tracker.handleQDown(flags: [.maskCommand, .maskShift])
+
+    XCTAssertFalse(tracker.isHeld)
+  }
+
+  func testResetClearsTrackedChord() {
+    var tracker = QuitChordTracker()
+    tracker.handleQDown(flags: [.maskCommand])
+
+    tracker.reset()
+
+    XCTAssertFalse(tracker.qIsDown)
+    XCTAssertFalse(tracker.plainCommandIsHeld)
+    XCTAssertFalse(tracker.isHeld)
+  }
+}
+
+final class QuitTargetResolverTests: XCTestCase {
+  func testAnnotatedEventTargetWinsOverWorkspaceSnapshot() {
+    XCTAssertEqual(
+      QuitTargetResolver.resolve(
+        frontmostPID: 42,
+        annotatedPID: 99,
+        ownPID: 7
+      ),
+      99
+    )
+  }
+
+  func testFrontmostApplicationIsFallbackForMissingAnnotation() {
+    XCTAssertEqual(
+      QuitTargetResolver.resolve(
+        frontmostPID: 42,
+        annotatedPID: 0,
+        ownPID: 7
+      ),
+      42
+    )
+  }
+
+  func testOwnAnnotatedTargetNeverFallsBackToAnotherApplication() {
+    XCTAssertNil(
+      QuitTargetResolver.resolve(
+        frontmostPID: 42,
+        annotatedPID: 7,
+        ownPID: 7
+      )
+    )
+  }
+
+  func testOwnFrontmostApplicationIsRejectedWhenAnnotationIsMissing() {
+    XCTAssertNil(
+      QuitTargetResolver.resolve(
+        frontmostPID: 7,
+        annotatedPID: 0,
+        ownPID: 7
+      )
+    )
   }
 }

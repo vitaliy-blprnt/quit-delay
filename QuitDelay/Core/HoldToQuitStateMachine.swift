@@ -66,7 +66,7 @@ struct HoldToQuitStateMachine {
     case hideOverlay(generation: UInt64)
     case scheduleDeadline(Session)
     case cancelDeadline
-    case replayCommandQ(targetPID: Int32)
+    case requestApplicationQuit(targetPID: Int32)
   }
 
   struct Transition: Equatable {
@@ -146,15 +146,15 @@ struct HoldToQuitStateMachine {
         return Transition(suppressEvent: false, effects: [])
       }
 
-      let shouldReplay = targetIsStillActive && chordIsStillHeld && qIsDown
+      let shouldQuit = targetIsStillActive && chordIsStillHeld && qIsDown
       phase = qIsDown ? .suppressingUntilQUp : .idle
 
       var effects: [Effect] = [
         .cancelDeadline,
         .hideOverlay(generation: session.generation),
       ]
-      if shouldReplay {
-        effects.append(.replayCommandQ(targetPID: session.targetPID))
+      if shouldQuit {
+        effects.append(.requestApplicationQuit(targetPID: session.targetPID))
       }
 
       return Transition(suppressEvent: false, effects: effects)

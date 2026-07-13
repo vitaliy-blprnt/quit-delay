@@ -1,32 +1,44 @@
 import AppKit
-import CoreGraphics
+import ApplicationServices
 
 final class AccessibilityPermissionController: ObservableObject {
-  @Published private(set) var canListenToEvents = false
-  @Published private(set) var canPostEvents = false
+  @Published private(set) var isAccessibilityGranted = false
   @Published private(set) var runtimeError: String?
 
+  private let preflightAccessibilityAccess: () -> Bool
+  private let requestAccessibilityAccess: () -> Bool
+
   var isReady: Bool {
-    canListenToEvents && canPostEvents && runtimeError == nil
+    isAccessibilityGranted && runtimeError == nil
   }
 
-  init() {
+  init(
+    preflightAccessibilityAccess: @escaping () -> Bool = { AXIsProcessTrusted() },
+    requestAccessibilityAccess: @escaping () -> Bool = {
+      let options = [
+        kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
+      ] as CFDictionary
+      return AXIsProcessTrustedWithOptions(options)
+    }
+  ) {
+    self.preflightAccessibilityAccess = preflightAccessibilityAccess
+    self.requestAccessibilityAccess = requestAccessibilityAccess
     refresh()
   }
 
   func refresh() {
-    canListenToEvents = CGPreflightListenEventAccess()
-    canPostEvents = CGPreflightPostEventAccess()
+    let previouslyAllowed = isAccessibilityGranted
+    isAccessibilityGranted = preflightAccessibilityAccess()
+
+    if !previouslyAllowed && isAccessibilityGranted {
+      runtimeError = nil
+    }
   }
 
   func requestRequiredAccess() {
     runtimeError = nil
-    if !CGPreflightPostEventAccess() {
-      _ = CGRequestPostEventAccess()
-      refresh()
-      return
-    } else if !CGPreflightListenEventAccess() {
-      _ = CGRequestListenEventAccess()
+    if !preflightAccessibilityAccess() {
+      _ = requestAccessibilityAccess()
     }
     refresh()
   }
@@ -37,13 +49,9 @@ final class AccessibilityPermissionController: ObservableObject {
   }
 
   func openRelevantSystemSettings() {
-    let pane =
-      canPostEvents && runtimeError == nil
-      ? "Privacy_ListenEvent"
-      : "Privacy_Accessibility"
     guard
       let url = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?\(pane)"
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
       )
     else { return }
     NSWorkspace.shared.open(url)

@@ -5,9 +5,23 @@ struct SettingsView: View {
   @ObservedObject var launchAtLogin: LaunchAtLoginController
   @ObservedObject var permissions: AccessibilityPermissionController
   let retryInterception: () -> Void
+  let relaunchApp: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
+      Image("QuitDelayLogo")
+        .resizable()
+        .scaledToFit()
+        .frame(width: 300, height: 86)
+        .accessibilityLabel("QuitDelay")
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+          RoundedRectangle(cornerRadius: 14)
+            .stroke(Color.black.opacity(0.08), lineWidth: 1)
+        }
+
       GroupBox("Quit Delay") {
         VStack(alignment: .leading, spacing: 10) {
           HStack {
@@ -65,7 +79,7 @@ struct SettingsView: View {
       GroupBox("System Access") {
         VStack(alignment: .leading, spacing: 10) {
           Label(
-            permissions.isReady ? "QuitDelay is ready" : "Permission required",
+            systemAccessStatus,
             systemImage: permissions.isReady
               ? "checkmark.circle.fill"
               : "exclamationmark.triangle.fill"
@@ -73,16 +87,12 @@ struct SettingsView: View {
           .foregroundStyle(permissions.isReady ? .green : .orange)
 
           permissionRow(
-            title: "Replay shortcuts",
-            isAllowed: permissions.canPostEvents
-          )
-          permissionRow(
-            title: "Monitor shortcuts",
-            isAllowed: permissions.canListenToEvents
+            title: "Protect Command–Q shortcuts",
+            isAllowed: permissions.isAccessibilityGranted
           )
 
           if !permissions.isReady {
-            Text("macOS must allow QuitDelay to monitor and replay the Command–Q shortcut.")
+            Text(systemAccessGuidance)
               .font(.caption)
               .foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
@@ -94,13 +104,28 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack {
-              Button(permissionActionTitle) {
-                permissions.requestRequiredAccess()
-                retryInterception()
+            if permissions.isAccessibilityGranted {
+              HStack {
+                Button("Relaunch QuitDelay") {
+                  relaunchApp()
+                }
+                .keyboardShortcut(.defaultAction)
+
+                Button("Open System Settings") {
+                  permissions.openRelevantSystemSettings()
+                }
+                Spacer()
               }
-              Button("Open System Settings") {
-                permissions.openRelevantSystemSettings()
+            } else {
+              HStack {
+                Button("Request Accessibility") {
+                  permissions.requestRequiredAccess()
+                  retryInterception()
+                }
+                Button("Open System Settings") {
+                  permissions.openRelevantSystemSettings()
+                }
+                Spacer()
               }
             }
           }
@@ -133,11 +158,20 @@ struct SettingsView: View {
     return String(format: "%.2f sec", value)
   }
 
-  private var permissionActionTitle: String {
-    if permissions.runtimeError != nil {
-      return "Retry"
+  private var systemAccessStatus: String {
+    if permissions.isReady {
+      return "QuitDelay is ready"
     }
-    return permissions.canPostEvents ? "Request Input Monitoring" : "Request Accessibility"
+    return permissions.isAccessibilityGranted
+      ? "Relaunch required"
+      : "Permission required"
+  }
+
+  private var systemAccessGuidance: String {
+    if permissions.isAccessibilityGranted {
+      return "Accessibility is enabled. Relaunch QuitDelay so macOS applies the permission to the keyboard monitor."
+    }
+    return "Enable QuitDelay in Accessibility, then return here to finish setup."
   }
 
   private func permissionRow(title: String, isAllowed: Bool) -> some View {
