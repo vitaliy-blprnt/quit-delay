@@ -62,7 +62,7 @@ final class HoldOverlayController {
 
   private func makePanel() -> NSPanel {
     let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 340, height: 116),
+      contentRect: NSRect(x: 0, y: 0, width: 96, height: 96),
       styleMask: [.borderless, .nonactivatingPanel],
       backing: .buffered,
       defer: false
@@ -110,45 +110,29 @@ private struct HoldOverlayView: View {
   @ObservedObject var model: HoldOverlayModel
 
   var body: some View {
-    HStack(spacing: 18) {
-      ZStack {
-        Circle()
-          .stroke(Color.primary.opacity(0.13), lineWidth: 5)
-        Circle()
-          .trim(from: 0, to: model.progress)
-          .stroke(
-            Color.accentColor,
-            style: StrokeStyle(lineWidth: 5, lineCap: .round)
-          )
-          .rotationEffect(.degrees(-90))
-        Image(nsImage: model.appIcon)
-          .resizable()
-          .scaledToFit()
-          .frame(width: 42, height: 42)
-      }
-      .frame(width: 64, height: 64)
-
-      VStack(alignment: .leading, spacing: 7) {
-        Text("Hold ⌘Q to Quit")
-          .font(.system(size: 18, weight: .semibold))
-        Text(model.appName)
-          .font(.system(size: 14))
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-
-        ProgressView(value: model.progress)
-          .progressViewStyle(.linear)
-          .tint(.accentColor)
-          .frame(maxWidth: .infinity)
-      }
+    ZStack {
+      Circle()
+        .stroke(Color.primary.opacity(0.13), lineWidth: 5)
+      Circle()
+        .trim(from: 0, to: model.progress)
+        .stroke(
+          Color.accentColor,
+          style: StrokeStyle(lineWidth: 5, lineCap: .round)
+        )
+        .rotationEffect(.degrees(-90))
+      Image(nsImage: model.appIcon)
+        .resizable()
+        .scaledToFit()
+        .frame(width: 42, height: 42)
     }
-    .padding(.horizontal, 22)
-    .padding(.vertical, 18)
-    .frame(width: 340, height: 116)
+    .frame(width: 64, height: 64)
+    .frame(width: 96, height: 96)
     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
     .overlay {
       RoundedRectangle(cornerRadius: 18)
         .stroke(Color.primary.opacity(0.12), lineWidth: 1)
     }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("Hold Command Q to quit \(model.appName)")
   }
 }

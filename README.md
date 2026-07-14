@@ -70,6 +70,24 @@ xcodebuild -project QuitDelay.xcodeproj \
 
 The app will be at `DerivedData/Build/Products/Release/QuitDelay.app`. Ad-hoc builds are not notarized and are only intended for your own Mac. Because their identity can change between builds, macOS may request privacy approval again; use the signed GitHub release or a consistent Apple Development identity for regular use.
 
+### Test a production-signed build locally
+
+Project maintainers with the QuitDelay **Developer ID Application** certificate and private key installed can build the production configuration without notarizing or publishing it:
+
+```sh
+scripts/build.sh
+```
+
+This runs the tests, creates a universal `arm64`/`x86_64` Release archive, enables Hardened Runtime, signs with Developer ID, and verifies the signature, entitlements, and production bundle identifier. The resulting app is at `.build/production/QuitDelay.app`. It intentionally signs the current working tree with QuitDelay's production identity so uncommitted changes can be tested accurately.
+
+Quit any installed or running copy of QuitDelay before opening the local build so that two global keyboard interceptors are not active at once:
+
+```sh
+open .build/production/QuitDelay.app
+```
+
+Pass `--launch` to launch automatically when QuitDelay is not already running. Set `SIGNING_IDENTITY` if multiple Developer ID identities are installed, or `SKIP_TESTS=1` when the tests have already run. This local artifact is signed but not notarized or stapled; use `scripts/release.sh` for distributable builds.
+
 ## Development
 
 1. Clone the repository and open `QuitDelay.xcodeproj`.
@@ -127,7 +145,7 @@ Before publishing a release:
 3. Commit and push a clean `main` branch, then run:
 
    ```sh
-   scripts/release.sh 1.0.1
+   scripts/release.sh 1.0.2
    ```
 
 Use `--draft` or `--prerelease` after the version when needed. `NOTARY_PROFILE`, `SIGNING_IDENTITY`, and `BUILD_NUMBER` can override their detected/default values; set `SKIP_TESTS=1` only when the tests have already run against the exact commit being released.

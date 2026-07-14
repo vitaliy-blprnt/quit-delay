@@ -10,7 +10,6 @@ readonly SCHEME="QuitDelay"
 readonly APP_NAME="QuitDelay"
 readonly EXECUTABLE_NAME="QuitDelay"
 readonly APPLE_TEAM_ID="4ZAZ4G22CR"
-readonly EXPECTED_GITHUB_ACCOUNT="vitaliy-blprnt"
 readonly GITHUB_REPOSITORY="vitaliy-blprnt/quit-delay"
 readonly NOTARY_PROFILE="${NOTARY_PROFILE:-QuitDelay}"
 readonly DIST_DIR="${REPO_ROOT}/dist"
@@ -107,8 +106,8 @@ readonly CURRENT_BRANCH
 
 readonly HEAD_SHA="$(git rev-parse HEAD)"
 readonly ACTIVE_GITHUB_ACCOUNT="$(gh api user --jq .login 2>/dev/null || true)"
-[[ "${ACTIVE_GITHUB_ACCOUNT}" == "${EXPECTED_GITHUB_ACCOUNT}" ]] || \
-    die "GitHub CLI must be active as ${EXPECTED_GITHUB_ACCOUNT}. Run: gh auth switch --hostname github.com --user ${EXPECTED_GITHUB_ACCOUNT}"
+[[ -n "${ACTIVE_GITHUB_ACCOUNT}" ]] || \
+    die "GitHub CLI is not authenticated. Run: gh auth login"
 
 readonly REPOSITORY_VISIBILITY="$(gh repo view "${GITHUB_REPOSITORY}" --json visibility --jq .visibility 2>/dev/null || true)"
 [[ "${REPOSITORY_VISIBILITY}" == "PUBLIC" ]] || \
